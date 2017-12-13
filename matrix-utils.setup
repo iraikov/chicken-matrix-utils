@@ -1,0 +1,15 @@
+;;;; -*- Hen -*-
+
+(define (dynld-name fn)		
+  (make-pathname #f fn ##sys#load-dynamic-extension))	
+
+(compile -O -d2 -S -s matrix-utils.scm -j matrix-utils)
+(compile -O -d2 -S -s matrix-utils.import.scm)
+
+(install-extension 
+ 'matrix-utils
+ `( ,(dynld-name "matrix-utils") ,(dynld-name "matrix-utils.import") )
+ `((version 2.0)
+   ))
+
+

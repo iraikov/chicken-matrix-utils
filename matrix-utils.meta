@@ -1,0 +1,25 @@
+;;;; -*- Hen -*-
+
+((egg "matrix-utils.egg") ; This should never change
+
+ ; List here all the files that should be bundled as part of your egg.  
+
+ (files "matrix-utils.meta" "matrix-utils.scm" "matrix-utils.setup")
+
+ ; Your egg's license:
+
+ (license "GPL-3")
+
+ ; Pick one from the list of categories (see below) for your egg and
+ ; enter it here.
+
+ (category math)
+
+ ; A list of eggs matrix-utils depends on.
+
+ (needs srfi-42 srfi-4-comprehensions blas interfaces)
+ (test-depends test)
+
+ (author "Ivan Raikov")
+
+ (synopsis "Matrix utility operations."))

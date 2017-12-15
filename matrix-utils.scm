@@ -23,9 +23,9 @@
 
 (module matrix-utils
 
-        (make-numvector
-         numvector-new
-         list->numvector
+        (
+         <Vector>
+         make-<Vector>
          matrix-utils:error
          matrix-map
          matrix-fold
@@ -42,17 +42,11 @@
          )
 
    (import scheme chicken foreign data-structures srfi-4 srfi-1)
-   (require-extension interfaces srfi-4 srfi-42 srfi-4-comprehensions blas)
+   (require-extension typeclass srfi-4 srfi-42 srfi-4-comprehensions blas)
 
-   
-(interface numvector
-  (define numvector-itemsize)
-  (define (numvector-new n))
-  (define (numvector-set! vect i val))
-  (define (numvector-get vect i))
-  (define (numvector-length vect))
-  (define (list->numvector lst))
-  )
+(define-class <Vector> 
+   itemsize new from-list
+   get update size )
 
 #>
 
@@ -120,11 +114,10 @@ void crepmat(void *dest, const void *src, size_t sz, int ndim,
 
 
 ;;
-;; FILL-MATRIX!:: VOBJ * ORDER * M * N * A * F * F0 * [IX * IY * EX * EY] -> A
-;;
+;; FILL-MATRIX!:: ORDER * M * N * A * F * F0 * [IX * IY * EX * EY] -> A
+ ;;
 ;; FILL-MATRIX! fills matrix A of size M x N with the values returned
-;; by applying procedure F to each pair of indices in the matrix. VOBJ
-;; is an implementation of the vector interface.
+;; by applying procedure F to each pair of indices in the matrix. 
 ;;
 ;; Procedure F is of the form LAMBDA I J AX -> VAL * AX1, where I and
 ;; J are matrix indices, and AX is accumulator value (like in
@@ -139,7 +132,9 @@ void crepmat(void *dest, const void *src, size_t sz, int ndim,
 ;; Procedure F must ensure that it returns values that are within the
 ;; range of the underlying vector type used.
 ;;
-(define (fill-matrix! vobj order M N A f f0 #!key (ix 0) (iy 0) (ex M) (ey N))
+(define=> (fill-matrix! <Vector>)
+  
+  (lambda (order M N A f f0 #!key (ix 0) (iy 0) (ex M) (ey N))
   
   ;; optional arguments to specify a sub-matrix to be filled
   (if (not (and (fx>= ix 0) (fx>= iy 0) (fx<= ex M) (fx<= ey N)
@@ -153,7 +148,7 @@ void crepmat(void *dest, const void *src, size_t sz, int ndim,
                              (lambda (y ax)
                                (let ((i (fx- (car x+b) ix)) (j (fx- y iy)))
                                  (let-values (((val ax1) (f i j ax)))
-                                   ((numvector-set! vobj) A (fx+ (cdr x+b) y) val)
+                                   (update A (fx+ (cdr x+b) y) val)
                                    ax1)))))))
 	   
         ((= order ColMajor)
@@ -163,39 +158,45 @@ void crepmat(void *dest, const void *src, size_t sz, int ndim,
                              (lambda (x ax)
                                (let ((i (fx- x ix)) (j (fx- (car y+b) iy)))
                                  (let-values (((val ax1) (f j i ax)))
-                                   ((numvector-set! vobj) A (fx+ (cdr y+b) x) val)
+                                   (update A (fx+ (cdr y+b) x) val)
                                    ax1)))))))
         
         (else (matrix-utils:error 'fill-matrix! "unknown order " order)))
-  A)
+  A))
 
 ;;
-;; ONES:: VOBJ * M * N [* ORDER] -> A
+;; ONES:: M * N [* ORDER] -> A
 ;;
 ;; Procedure ONES returns a matrix A of size M x N, in which all
 ;; elements are 1.  Optional argument ORDER specifies the matrix
 ;; layout: ColMajor or RowMajor, default is RowMajor.
-;; VOBJ is an implementation of the vector interface.
 ;;
-(define (matrix-ones vobj m n #!key (order RowMajor))
-  (let ((A ((numvector-new vobj) (* m n))))
-    (fill-matrix! vobj order m n A (lambda (i j ax) (values 1.0 #f)) #f)))
+(define (matrix-ones V)
+  (lambda (m n #!key (order RowMajor))
+    (with-instance ((<Vector> V))
+                   (let ((A (new (* m n))))
+                     ((fill-matrix! V) order m n A (lambda (i j ax) (values 1.0 #f)) #f))
+                   ))
+  )
+
 
 ;;
-;; ZEROS:: VOBJ * M * N [* ORDER] -> A
+;; ZEROS:: M * N [* ORDER] -> A
 ;;
 ;; Procedure ZEROS returns a matrix A of size M x N, in which all
 ;; elements are 0.  Optional argument ORDER specifies the matrix
 ;; layout: ColMajor or RowMajor, default is RowMajor.
-;; VOBJ is an implementation of the vector interface.
 ;;
-(define (matrix-zeros vobj m n #!key (order RowMajor))
-  (let ((A ((numvector-new vobj) (* m n))))
-    (fill-matrix! vobj order m n A (lambda (i j ax) (values 0.0 #f)) #f)))
-
+(define (matrix-zeros V)
+  (lambda (m n #!key (order RowMajor))
+    (with-instance ((<Vector> V))
+                   (let ((A (new (* m n))))
+                     ((fill-matrix! V) order m n A (lambda (i j ax) (values 0.0 #f)) #f))
+                   ))
+  )
 
 ;;
-;; EYE:: VOBJ * M * N [* ORDER] -> I
+;; EYE:: M * N [* ORDER] -> I
 ;;
 ;; Procedure EYE returns an identity matrix of size M x N.
 ;; Optional argument ORDER specifies the matrix layout: ColMajor
@@ -206,9 +207,13 @@ void crepmat(void *dest, const void *src, size_t sz, int ndim,
 ;; MAKE-FILL-MATRIX, above. FILL-MATRIX! must operate on the same type
 ;; of vector as MAKE-VECTOR.
 ;;
-(define (matrix-eye vobj m n #!key (order RowMajor))
-  (let ((A ((numvector-new vobj) (* m n))))
-    (fill-matrix! vobj order m n A (lambda (i j ax) (values (if (fx= i j) 1.0 0.0) #f)) #f)))
+(define (matrix-eye V)
+  (lambda (m n #!key (order RowMajor))
+    (with-instance ((<Vector> V))
+                   (let ((A (new (* m n))))
+                     ((fill-matrix! V) order m n A (lambda (i j ax) (values (if (fx= i j) 1.0 0.0) #f)) #f))
+                   ))
+  )
 
 ;;
 ;; DIAG:: M * N * V [* K * ORDER] -> D
@@ -222,15 +227,20 @@ void crepmat(void *dest, const void *src, size_t sz, int ndim,
 ;; the matrix layout: ColMajor or RowMajor, default is
 ;; RowMajor. Vector V is always assumed to be a row vector.
 ;;
-(define (matrix-diag vobj m n v #!key (k 0) (order RowMajor))
-  (let ((A  ((numvector-new vobj) (* m n)))
-        (k  (if (eq? order RowMajor) k (- k))))
-    (fill-matrix! vobj order m n A
-                  (lambda (i j vi) 
-                    (if (fx= k (fx- j i))
-                        (values ((numvector-get vobj) v vi) (fx+ 1 vi))
-                        (values 0.0 vi)))
-                  0)))
+(define (matrix-diag V)
+  (lambda (m n v #!key (k 0) (order RowMajor))
+    (with-instance ((<Vector> V))
+                   (let ((A  (new (* m n)))
+                         (k  (if (eq? order RowMajor) k (- k))))
+                     ((fill-matrix! V)
+                      order m n A
+                      (lambda (i j vi) 
+                        (if (fx= k (fx- j i))
+                            (values (get v vi) (fx+ 1 vi))
+                            (values 0.0 vi)))
+                      0))
+                   ))
+  )
 
 ;;
 ;; LINSPACE:: N * BASE * LIMIT -> V
@@ -241,13 +251,17 @@ void crepmat(void *dest, const void *src, size_t sz, int ndim,
 ;; BASE is greater than LIMIT, the elements are stored in decreasing
 ;; order.
 ;;
-(define (linspace vobj n base limit)
-    (if (not (> n 1)) 
-	(matrix-utils:error 'linspace "vector size N must be greater than 1"))
-    (let ((step  (/ (- limit base) (fx- n 1)))
-	  (a     ((numvector-new vobj) n)))
-      (fill-matrix! vobj RowMajor 1 n a 
-		    (lambda (i j ax) (values (+ base (* 1.0 j step)) ax))  #f)))
+(define (linspace V)
+  (lambda (n base limit)
+    (with-instance ((<Vector> V))
+                   (if (not (> n 1)) 
+                       (matrix-utils:error 'linspace "vector size N must be greater than 1"))
+                   (let ((step  (/ (- limit base) (fx- n 1)))
+                         (a     (new n)))
+                     ((fill-matrix! V) RowMajor 1 n a 
+                      (lambda (i j ax) (values (+ base (* 1.0 j step)) ax))  #f))
+                   ))
+  )
       
 ;;
 ;; LOGSPACE:: N * BASE * LIMIT -> V
@@ -258,16 +272,20 @@ void crepmat(void *dest, const void *src, size_t sz, int ndim,
 ;; included in the range.  If BASE is greater than LIMIT, the elements
 ;; are stored in decreasing order.
 ;;
-(define (logspace vobj n base limit)
-    (if (not (> n 1)) 
-	(matrix-utils:error 'logspace "vector size N must be greater than 1"))
-    (let ((step  (/ (- limit base) (fx- n 1)))
-	  (a     ((numvector-new vobj) n))
-	  (b     (linspace vobj n base limit)))
-      (fill-matrix! vobj RowMajor 1 n a 
-		    (lambda (i j ax) 
-		      (let ((v  (expt 10 ((numvector-get vobj) b j))))
-			(values v  ax))) #f)))
+(define (logspace V)
+  (lambda (n base limit)
+    (with-instance ((<Vector> V))
+                   (if (not (> n 1)) 
+                       (matrix-utils:error 'logspace "vector size N must be greater than 1"))
+                   (let ((step  (/ (- limit base) (fx- n 1)))
+                         (a     (new n))
+                         (b     ((linspace V) n base limit)))
+                     ((fill-matrix! V) RowMajor 1 n a 
+                      (lambda (i j ax) 
+                        (let ((v  (expt 10 (get b j))))
+                          (values v  ax))) #f))
+                   ))
+  )
 
 
 
@@ -294,9 +312,11 @@ void crepmat(void *dest, const void *src, size_t sz, int ndim,
 ;; a valid sub-matrix.
 ;;
 
-(define (matrix-fold-partial vobj order M N A f p x0 #!key (ix 0) (iy 0) (ex M) (ey N))
+(define=> (matrix-fold-partial <Vector>)
+  
+  (lambda (order M N A f p x0 #!key (ix 0) (iy 0) (ex M) (ey N))
 
-    ;; optional arguments to specify a sub-matrix 
+  ;; optional arguments to specify a sub-matrix 
   (if (not (and (fx>= ix 0) (fx>= iy 0) (fx<= ex M) (fx<= ey N)
                 (fx<= ix ex) (fx<= iy ey)))
       (matrix-utils:error 'matrix-fold-partial "invalid sub-matrix dimensions: " (list ix iy ex ey)))
@@ -308,7 +328,7 @@ void crepmat(void *dest, const void *src, size_t sz, int ndim,
                              (lambda (y ax)
                                (let ((i (fx- (car x+b) ix)) (j (fx- y iy)))
                                  (if (p i j)
-                                     (f ((numvector-get vobj) A (fx+ (cdr x+b) y)) ax) ax)))))))
+                                     (f (get A (fx+ (cdr x+b) y)) ax) ax)))))))
         
         ((= order ColMajor)
          (fold-ec x0 (:parallel (:range b (fx* N ix) (fx* N M) M) (:range y iy ey)) (cons y b)
@@ -317,12 +337,13 @@ void crepmat(void *dest, const void *src, size_t sz, int ndim,
                              (lambda (x ax)
                                (let ((i (fx- x ix)) (j (fx- (car y+b) iy)))
                                  (if (p j i)
-                                     (f ((numvector-get vobj) A (fx+ (cdr y+b) x)) ax) ax)))))))
+                                     (f (get A (fx+ (cdr y+b) x)) ax) ax)))))))
         
         (else (matrix-utils:error 'matrix-fold-partial "unknown order " order))
         
         ))
-     
+  )
+
   
 
 ;;
@@ -343,7 +364,8 @@ void crepmat(void *dest, const void *src, size_t sz, int ndim,
 ;; a valid sub-matrix.
 ;;
 
-(define (matrix-fold vobj order M N A f x0 #!key (ix 0) (iy 0) (ex M) (ey N))
+(define=> (matrix-fold <Vector>)
+  (lambda (order M N A f x0 #!key (ix 0) (iy 0) (ex M) (ey N))
 
   (if (not (and (fx>= ix 0) (fx>= iy 0) (fx<= ex M) (fx<= ey N)
                 (fx<= ix ex) (fx<= iy ey)))
@@ -355,7 +377,7 @@ void crepmat(void *dest, const void *src, size_t sz, int ndim,
                     (fold-ec ax (:range y iy ey) y
                              (lambda (y ax)
                                (let ((i (fx- (car x+b) ix)) (j (fx- y iy)))
-                                 (f i j ((numvector-get vobj) A (fx+ (cdr x+b) y)) ax) ax))))))
+                                 (f i j (get A (fx+ (cdr x+b) y)) ax) ax))))))
         
         ((= order ColMajor)
          (fold-ec x0 (:parallel (:range b (fx* N ix) (fx* N M) M) (:range y iy ey)) (cons y b)
@@ -363,40 +385,27 @@ void crepmat(void *dest, const void *src, size_t sz, int ndim,
                     (fold-ec ax (:range x ix ex) x
                              (lambda (x ax)
                                (let ((i (fx- x ix)) (j (fx- (car y+b) iy)))
-                                 (f j i ((numvector-get vobj) A (fx+ (cdr y+b) x)) ax) ax))))))
+                                 (f j i (get A (fx+ (cdr y+b) x)) ax) ax))))))
         
         (else (matrix-utils:error 'matrix-fold "unknown order " order))
         ))
-     
+     )
 
   
-(define (matrix-map vobj order M N A f  #!key (ix 0) (iy 0) (ex M) (ey N))
-
-     (if (not (and (fx>= ix 0) (fx>= iy 0) (fx<= ex M) (fx<= ey N)
-		   (fx<= ix ex) (fx<= iy ey)))
-	 (matrix-utils:error 'matrix-map "invalid sub-matrix dimensions: " (list ix iy ex ey)))
-     
-     (cond ((= order RowMajor)
-	    (fill-matrix! vobj order M N A (lambda (i j ax) 
-                                             (let ((v  ((numvector-get vobj) A (fx+ j (fx* i M))))) (values (f i j v) #f))) #f))
-	   ((= order ColMajor)
-	    (fill-matrix! vobj order M N A (lambda (i j ax) 
-                                             (let ((v  ((numvector-get vobj) A (fx+ i (fx* j N))))) (values (f j i v) #f))) #f))
-           
-	   (else (matrix-utils:error 'matrix-map "unknown order " order))
-           
-           ))
-			    
+(define (matrix-map V)
+  (lambda (order M N A f  #!key (ix 0) (iy 0) (ex M) (ey N))
+    ((matrix-fold V) order M N A (lambda (x ax) (cons (f x) ax)) '())))
 
 
 
-
-(define (repmat vobj src dims reps)
-  
-  (let* ((sz (numvector-itemsize vobj))
-         (ndim (length dims))
+(define (repmat V)
+  (lambda (src dims reps)
+    (with-instance ((<Vector> V))
+                   
+  (let* ((sz      itemsize)
+         (ndim    (length dims))
 	 (dimsize (make-s32vector ndim))
-	 (vdims (list->s32vector dims)))
+	 (vdims   (list->s32vector dims)))
 
     (print "src = " src)
     (print "dims = " dims)
@@ -452,7 +461,7 @@ void crepmat(void *dest, const void *src, size_t sz, int ndim,
 
 	    ;; return array
 	    (let* ((destlen (s32vector-ref destdimsize (- ndimdest 1)))
-		   (dest ((numvector-new vobj) destlen)))
+		   (dest (new destlen)))
               (print "destlen = " destlen)
 	      (vrepmat dest src sz ndim destdimsize dimsize vdims rep)
 	      (if (> ndimdest ndim)
@@ -462,38 +471,41 @@ void crepmat(void *dest, const void *src, size_t sz, int ndim,
 	      ))
 	  ))
       ))
-  )
-
+  ))
+)
 
 	  
 
-(define (meshgrid vobj x y  . rest)
-  (let-optionals rest ((z #f))
-  
-  (let ((sz   (numvector-itemsize vobj))
-        (lenx ((numvector-length vobj) x))
-        (leny ((numvector-length vobj) y))
-        (lenz (and z ((numvector-length vobj) z))))
-    
-    (let ((dimx (list 1 lenx))
-          (dimy (list 1 leny))
-          (dimz (and z (list 1 lenz))))
-          
-      (let ((xx (if z (repmat vobj
-                              (repmat vobj x dimx (list leny 1))
-                              (list leny lenx)
-                              (list 1 1 lenz))
-                    (repmat vobj x dimx (list leny 1))))
-            (yy (if z (repmat vobj
-                              (repmat vobj y dimy (list 1 lenx))
-                              (list lenx leny)
-                              (list 1 1 lenz))
-                (repmat vobj y dimy (list 1 lenx))))
-            (zz (if z (repmat vobj z dimz (list (* lenx leny) 1)) #f)))
-        
-        (filter identity (list xx yy zz)))
-      
-      ))
+(define (meshgrid V)
+  (lambda (x y  . rest)
+    (let-optionals rest ((z #f))
+    (with-instance ((<Vector> V))
+                   
+     (let ((sz   itemsize)
+           (lenx (size x))
+           (leny (size y))
+           (lenz (and z (size z))))
+       
+       (let ((dimx (list 1 lenx))
+             (dimy (list 1 leny))
+             (dimz (and z (list 1 lenz))))
+         
+         (let ((xx (if z ((repmat V)
+                                 ((repmat V) x dimx (list leny 1))
+                                 (list leny lenx)
+                                 (list 1 1 lenz))
+                       ((repmat V) x dimx (list leny 1))))
+               (yy (if z ((repmat V)
+                                 ((repmat V)  y dimy (list 1 lenx))
+                                 (list lenx leny)
+                                 (list 1 1 lenz))
+                       ((repmat V) y dimy (list 1 lenx))))
+               (zz (if z ((repmat V) z dimz (list (* lenx leny) 1)) #f)))
+           
+           (filter identity (list xx yy zz)))
+         
+         ))
+     ))
   ))
 
       

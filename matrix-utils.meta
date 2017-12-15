@@ -17,7 +17,7 @@
 
  ; A list of eggs matrix-utils depends on.
 
- (needs srfi-42 srfi-4-comprehensions blas interfaces)
+ (needs srfi-42 srfi-4-comprehensions blas typeclass)
  (test-depends test)
 
  (author "Ivan Raikov")
